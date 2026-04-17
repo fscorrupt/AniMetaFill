@@ -242,11 +242,21 @@ def run_sync(scheduler=None):
     print(f"  • Run Duration:        {duration_str}")
 
     if scheduler:
-        jobs = scheduler.get_jobs()
-        if jobs:
-            next_run = min(job.next_run_time for job in jobs if job.next_run_time)
-            if next_run:
-                print(f"  • Next Scheduled Run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+        try:
+            jobs = scheduler.get_jobs()
+            if jobs:
+                # Safely collect next_run_time from all jobs
+                run_times = []
+                for job in jobs:
+                    nrt = getattr(job, 'next_run_time', None)
+                    if nrt:
+                        run_times.append(nrt)
+                
+                if run_times:
+                    next_run = min(run_times)
+                    print(f"  • Next Scheduled Run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception as e:
+            logger.warning(f"Could not determine next run time: {e}")
 
     if skipped_reasons:
         print("\n  Reasons for Skipping:")
