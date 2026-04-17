@@ -159,7 +159,11 @@ AniMetaFill allows you to style your overlays directly in the `config.yml`. You 
 - **Alignment**: Support for `left`, `center`, and `right` positioning.
 
 ---
+## 🤖 AI Disclosure
 
+Simposter is developed with the assistance of AI. AI is used to help write, review, and iterate on code — all features are designed, directed, and tested by a human developer.
+
+---
 
 <p align="center">
   <i>Created with ❤️ for the Anime community.</i>
