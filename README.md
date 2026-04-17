@@ -103,6 +103,25 @@ You can trigger AniMetaFill manually or force specific behaviors using the follo
 - **Force Re-sync**: `python -m app.main --force`
   Refreshes all marker data from providers, even if they were already synced.
 
+---
+
+## 📅 Scheduling & Daemon
+AniMetaFill includes a built-in scheduler to keep your library in sync automatically.
+
+### Configuration Options
+In your `config.yml`, you can customize the run frequency:
+
+- **Mode: `interval`**: Runs every X minutes (defined by `interval: 60`).
+- **Mode: `daily`**: Runs at specific times every day.
+  - *Multiple Times*: You can use comma-separated hours: `time: "02:00,05:00,08:00,11:00,14:00,17:00,20:00,23:00"`.
+- **Mode: `weekly`**: Runs once a week on a specific day (e.g., `weekday: "mon"`).
+- **Mode: `monthly`**: Runs once a month on a specific day (e.g., `day: 15`).
+
+> [!TIP]
+> Setting `run_on_startup: true` ensures that AniMetaFill performs a full sync immediately whenever the container or script starts, regardless of the next scheduled time.
+
+---
+
 ## 🖇 Kometa Integration
 Once AniMetaFill has completed its first sync, it will generate a unified `anime_overlays.yml` file. You must mount this file (or the parent directory) into your **Kometa** container and reference it in your Kometa `config.yml`.
 

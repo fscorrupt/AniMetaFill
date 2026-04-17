@@ -269,26 +269,35 @@ def main():
     logger.info(f"Scheduler initialized with timezone: {tz}")
     mode = sched_conf.get('mode', 'daily').lower()
     time_str = sched_conf.get('time', '03:00')
-    try:
-        hour, minute = map(int, time_str.split(':'))
-    except ValueError:
-        hour, minute = 3, 0
+    
+    # Parse time entries (Supports "03:00" or "02:30,05:30")
+    time_points = []
+    for entry in time_str.split(','):
+        entry = entry.strip()
+        if ':' in entry:
+            h, m = entry.split(':')
+            time_points.append((h, m))
+        else:
+            time_points.append((entry, "0"))
 
-    if mode == 'interval':
-        minutes = sched_conf.get('interval', 1440)
-        scheduler.add_job(run_sync, IntervalTrigger(minutes=minutes))
-        logger.system(f"Scheduled: Every {minutes} minutes.")
-    elif mode == 'daily':
-        scheduler.add_job(run_sync, CronTrigger(hour=hour, minute=minute))
-        logger.system(f"Scheduled: Daily at {time_str}.")
-    elif mode == 'weekly':
-        day_of_week = sched_conf.get('weekday', 'mon').lower()
-        scheduler.add_job(run_sync, CronTrigger(day_of_week=day_of_week, hour=hour, minute=minute))
-        logger.system(f"Scheduled: Weekly on {day_of_week} at {time_str}.")
-    elif mode == 'monthly':
-        day = sched_conf.get('day', 1)
-        scheduler.add_job(run_sync, CronTrigger(day=day, hour=hour, minute=minute))
-        logger.system(f"Scheduled: Monthly on day {day} at {time_str}.")
+    # Add jobs for each requested time
+    for h, m in time_points:
+        if mode == 'interval':
+            minutes = sched_conf.get('interval', 1440)
+            scheduler.add_job(run_sync, IntervalTrigger(minutes=minutes))
+            logger.system(f"Scheduled: Every {minutes} minutes.")
+            break
+        elif mode == 'daily':
+            scheduler.add_job(run_sync, CronTrigger(hour=h, minute=m))
+            logger.system(f"Scheduled: Daily at {h}:{m}.")
+        elif mode == 'weekly':
+            day_of_week = sched_conf.get('weekday', 'mon').lower()
+            scheduler.add_job(run_sync, CronTrigger(day_of_week=day_of_week, hour=h, minute=m))
+            logger.system(f"Scheduled: Weekly on {day_of_week} at {h}:{m}.")
+        elif mode == 'monthly':
+            day = sched_conf.get('day', 1)
+            scheduler.add_job(run_sync, CronTrigger(day=day, hour=h, minute=m))
+            logger.system(f"Scheduled: Monthly on day {day} at {h}:{m}.")
 
     # Run on startup if configured
     if sched_conf.get('run_on_startup', True):
