@@ -1,0 +1,6 @@
+plexapi
+requests
+beautifulsoup4
+PyYAML
+apscheduler
+tzdata

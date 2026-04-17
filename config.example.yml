@@ -1,0 +1,85 @@
+# ==============================================================================
+#  🧬 AniMetaFill - Configuration Guide
+# ==============================================================================
+# Copy this file to 'config.yml' before starting the container.
+# Values in quotes "" should be treated as strings.
+
+# ==============================================================================
+# PLEX CONNECTION
+# ==============================================================================
+# Used to scan your libraries and identify which shows need classification.
+plex:
+  url: "http://192.168.1.100:32400"
+  token: "YOUR_PLEX_TOKEN"
+  libraries:
+    - "Anime Shows" # The exact name of your Anime library section in Plex.
+
+# ==============================================================================
+# SONARR CONNECTION
+# ==============================================================================
+# Highly recommended. Used to precisely map absolute episode numbers (AFL/SIMKL)
+# to your specific season/episode files.
+sonarr:
+  url: "http://192.168.1.100:8989"
+  api_key: "YOUR_SONARR_API_KEY"
+
+# ==============================================================================
+# PROVIDER: SIMKL
+# ==============================================================================
+# Primary data source for High-Precision ID matching and filler lists.
+simkl:
+  # Get your FREE Client ID at: https://simkl.com/settings/developer/
+  client_id: "YOUR_SIMKL_CLIENT_ID"
+
+# ==============================================================================
+# KOMETA OVERLAY GENERATION
+# ==============================================================================
+# Where the generated .yml files will be saved.
+kometa:
+  output_dir: "/data/kometa_overlays"
+
+  # Path to the font file inside the Kometa container (not this container).
+  font_path: "config/fonts/Colus-Regular.ttf"
+
+  # The text labels that will appear on your posters.
+  labels:
+    canon: "Canon"
+    filler: "Filler"
+    mixed: "Mixed"
+
+  # Hex colors for the text labels (supports ARGB with Alpha suffix).
+  colors:
+    canon: "#27C24CB3"  # Green
+    filler: "#FF0000B3" # Red
+    mixed: "#FFA500B3"  # Orange
+
+  # Visual styling for the overlay bar.
+  aesthetic:
+    horizontal_align: "left"   # left, center, right
+    vertical_align: "top"      # top, middle, bottom
+    horizontal_offset: 0
+    vertical_offset: 15
+    back_color: "#000000BF"    # Transparent black bar background
+    back_width: 300            # Width of the bar in pixels
+    back_height: 100           # Height of the bar in pixels
+    font_size: 70
+
+# ==============================================================================
+# DATABASE
+# ==============================================================================
+database:
+  path: "/data/anime_data.db" # Local SQLite database storage.
+
+# ==============================================================================
+# SCHEDULING (DAEMON MODE)
+# ==============================================================================
+scheduling:
+  enabled: true             # Set to false to run once and exit.
+  run_on_startup: true      # Trigger a sync immediately when the container starts.
+  mode: "daily"             # interval, daily, weekly, monthly
+
+  interval: 1440            # [mode: interval] Minutes between runs.
+  time: "03:00"             # [mode: daily/weekly/monthly] HH:MM format.
+
+  weekday: "mon"            # [mode: weekly] mon, tue, wed, thu, fri, sat, sun.
+  day: 1                    # [mode: monthly] Day of the month (1-31).

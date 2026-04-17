@@ -1,0 +1,22 @@
+---
+services:
+  animetafill:
+    hostname: "animetafill"
+    container_name: "animetafill"
+    environment:
+      - "TZ=Europe/Berlin"
+    user: "1000:1000"
+    image: "ghcr.io/fscorrupt/animetafill:latest"
+    restart: "unless-stopped"
+    volumes:
+      - "/opt/appdata/animetafill/config.yml:/app/config.yml:ro" # Mount your local config
+      - "/opt/appdata/animetafill/data:/data:rw"               # Database and JSON export
+      - "/opt/appdata/animetafill/data/kometa_overlays:/data/kometa_overlays:rw" # Generated overlay
+      - "/opt/appdata/animetafill/logs:/app/logs:rw"
+    networks:
+      - "proxy"
+
+networks:
+  proxy:
+    driver: bridge
+    external: true

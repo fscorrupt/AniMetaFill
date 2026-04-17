@@ -1,0 +1,309 @@
+import yaml
+import os
+import time
+import sys
+import json
+from datetime import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
+
+from app.database import AnimeDatabase
+from app.providers import AnimeFillerListProvider, SimklProvider, EpisodeData, EpisodeCategory
+from app.classifier import EpisodeClassifierService
+from app.plex_client import PlexScanner
+from app.sonarr_client import SonarrTranslator
+from app.kometa import KometaYamlGenerator
+from app.logger import logger
+
+def load_config():
+    """
+    Loads configuration from config.yml, falling back to config.example.yml 
+    if the primary config is missing.
+    """
+    config_path = 'config.yml'
+    if not os.path.exists(config_path):
+        config_path = 'config.example.yml'
+
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+def run_sync():
+    """
+    Core synchronization loop.
+    
+    This function handles the end-to-end synchronization process:
+    1. Reads Plex libraries to find shows.
+    2. Imports manual overrides from existing Kometa YAML (Reverse Sync).
+    3. Queries Sonarr/Plex to establish episode maps.
+    4. Researches missing filler data via SIMKL and AFL.
+    5. Generates optimized Kometa Overlay YAMLs.
+    """
+    logger.system(f"Starting Sync Task: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    config = load_config()
+
+    # 1. Initialize Components
+    db_path = config.get('database', {}).get('path', '/data/anime_data.db')
+    db = AnimeDatabase(db_path)
+
+    afl_provider = AnimeFillerListProvider()
+    simkl_conf = config.get('simkl', {})
+    simkl_provider = SimklProvider(simkl_conf.get('client_id'))
+
+    classifier = EpisodeClassifierService(db, afl_provider, simkl_provider)
+
+    plex_conf = config.get('plex', {})
+    scanner = PlexScanner(plex_conf.get('url'), plex_conf.get('token'))
+
+    sonarr_conf = config.get('sonarr', {})
+    sonarr = SonarrTranslator(sonarr_conf.get('url'), sonarr_conf.get('api_key'))
+
+    kometa_conf = config.get('kometa', {})
+    kometa_out = kometa_conf.get('output_dir', '/data/kometa_overlays')
+
+    kometa_gen = KometaYamlGenerator(kometa_out, kometa_config=kometa_conf)
+    kometa_gen.migrate_legacy_files("anime_overlays.yml")
+    
+    # 2. Fetch shows from Plex
+    plex_libraries = plex_conf.get('libraries', [])
+    shows = scanner.get_shows_from_libraries(plex_libraries)
+    logger.info(f"Found {len(shows)} shows across {len(plex_libraries)} Plex libraries.")
+
+    json_export_path = "/data/anime_database.json"
+
+    # -- REVERSE SYNC PHASE: Import manual edits from YAML --
+    logger.system("Checking for manual edits in existing YAML...")
+    existing_overlays = kometa_gen.get_existing_overlays("anime_overlays.yml")
+    
+    # Group by title (case-insensitive) to avoid redundant Sonarr lookups
+    grouped_edits = {}
+    for item in existing_overlays:
+        t = item['title']
+        norm_t = t.strip().lower()
+        if norm_t not in grouped_edits: 
+            grouped_edits[norm_t] = {"canonical": t, "edits": []}
+        grouped_edits[norm_t]["edits"].append(item)
+
+    for norm_title, data in grouped_edits.items():
+        title = data["canonical"]
+        edits = data["edits"]
+        
+        # Optimization: Only import from YAML if the show is not already synced 
+        # OR if we are forcing a re-sync. This avoids redundant API calls.
+        if db.has_ever_synced(title) and "--force" not in sys.argv:
+            continue
+
+        if any(title.lower() == s.lower() for s in shows): # Only import what's in our library
+            series_info = sonarr.get_series_info(title)
+            if series_info:
+                full_map = sonarr.get_absolute_to_season_map(series_info['id'])
+                inv_map = {v: k for k, v in full_map.items()}
+                
+                all_eps = []
+                for item in edits:
+                    cat_enum = EpisodeCategory.from_string(item['category'])
+                    for s_e in item['episodes']:
+                        abs_num = inv_map.get(s_e)
+                        if abs_num:
+                            all_eps.append(EpisodeData(
+                                number=abs_num,
+                                title="Manual Override",
+                                category=cat_enum
+                            ))
+                
+                if all_eps:
+                    db.upsert_episodes(title, all_eps)
+                    logger.info(f"Imported {len(all_eps)} total markers for '{title}' from YAML.")
+
+    # 3. Main Loop
+    skipped_list = [] # Detailed tracker for unmapped_shows.json
+    skipped_reasons = {}
+    total_shows = len(shows)
+    successful_count = 0
+
+    def log_skip(reason, title):
+        skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+        skipped_list.append({"title": title, "reason": reason})
+        logger.warning(f"Skip: {reason}")
+
+    for idx, title in enumerate(shows, 1):
+        try:
+            logger.divider()
+            logger.system(f"[ {idx:03} / {total_shows:03} ] Processing: {title}")
+
+            # A. Validate via Sonarr / Plex Fallback
+            series_info = sonarr.get_series_info(title)
+            sonarr_map = {}
+            status = 'unknown'
+
+            if series_info:
+                status = series_info.get('status', 'unknown')
+                sonarr_map = sonarr.get_absolute_to_season_map(series_info['id'])
+            else:
+                logger.info("Not found in Sonarr. Attempting Plex-native fallback...")
+                sonarr_map = scanner.get_episode_map(title)
+                if not sonarr_map:
+                    log_skip("Not found in Sonarr or Plex API", title)
+                    continue
+                logger.success(f"Plex-native mapping created: {len(sonarr_map)} episodes.")
+
+            sonarr_count = len(sonarr_map)
+
+            # C. Get Local DB data
+            db_mapping = db.get_episodes(title)
+            db_count = sum(len(v) for v in db_mapping.values())
+
+            # D. Smart Sync Logic
+            # We only perform network-heavy research if:
+            # - We have never synced this show before.
+            # - The user explicitly requested a --force re-sync.
+            # - Our local episode count is lower than Sonarr's (new episodes aired).
+            force_resync = "--force" in sys.argv
+            needs_update = False
+
+            if not db.has_ever_synced(title):
+                logger.db("No previous sync data. Initializing provider research...")
+                needs_update = True
+            elif force_resync:
+                logger.warning(f"Force re-sync requested for {title}. Overriding local DB...")
+                needs_update = True
+            elif db_count < sonarr_count:
+                logger.db(f"Local Sync Outdated ({db_count} local vs {sonarr_count} remote). Syncing...")
+                needs_update = True
+            else:
+                logger.info(f"Local DB is already up-to-date ({db_count} markers). Skipping research.")
+
+            if needs_update:
+                title_candidates = series_info.get('alternate_titles', [title]) if series_info else [title]
+                if title not in title_candidates:
+                    title_candidates.insert(0, title)
+                else:
+                    # Move to front
+                    title_candidates.remove(title)
+                    title_candidates.insert(0, title)
+
+                search_success = classifier.force_update_mapping(
+                    title_candidates, 
+                    tvdb_id=series_info.get('tvdb_id') if series_info else None,
+                    expected_count=sonarr_count
+                )
+
+                # Fetch fresh mapping after search
+                db_mapping = db.get_episodes(title)
+                db_count = sum(len(v) for v in db_mapping.values())
+
+                if not search_success and not any(db_mapping.values()):
+                    log_skip("No filler data found in any sync tier", title)
+                    continue
+            else:
+                logger.info(f"Local DB is already up-to-date ({db_count} markers). Skipping search.")
+
+            # E. Stage Kometa Overlays
+            if any(db_mapping.values()):
+                kometa_gen.add_show_overlays(title, db_mapping, sonarr_map)
+                successful_count += 1
+                logger.success(f"Show mapped with {db_count} filler/canon markers.")
+            else:
+                log_skip("No filler data found", title)
+
+        except Exception as e:
+            logger.error(f"Failed to process {title}: {e}")
+            log_skip("Internal Error", title)
+            continue
+
+    # 4. Finalize Exports
+    kometa_gen.save_unified_file("anime_overlays.yml")
+    db.export_to_json(json_export_path)
+
+    # Export Unmapped Shows report
+    unmapped_path = "/data/unmapped_shows.json"
+    try:
+        tmp_unmapped = f"{unmapped_path}.tmp"
+        with open(tmp_unmapped, 'w') as f:
+            json.dump({"date": str(datetime.now()), "skipped_shows": skipped_list}, f, indent=2)
+        os.replace(tmp_unmapped, unmapped_path)
+        logger.info(f"Unmapped shows report exported to {unmapped_path}")
+    except Exception as e:
+        logger.error(f"Failed to export unmapped shows report: {e}")
+
+    # 5. Final Summary
+    print("\n" + "="*50)
+    print("  🏁  FINAL SYNC SUMMARY")
+    print("="*50)
+    print(f"  • Total Shows:       {total_shows}")
+    print(f"  • Successfully Mapped: {successful_count}")
+    print(f"  • Skipped/Failed:      {total_shows - successful_count}")
+
+    if skipped_reasons:
+        print("\n  Reasons for Skipping:")
+        for reason, count in skipped_reasons.items():
+            print(f"    - {reason:<25} : {count}")
+    print("="*50 + "\n")
+
+    logger.system("Sync Task Finished.")
+
+def main():
+    """
+    Application entry point. 
+    Handles both immediate CLI execution and background daemon scheduling.
+    """
+    print("""
+    ==================================================
+       🧬 AniMetaFill 🧬
+       Automated Anime Filler Classification
+    ==================================================
+    """)
+    logger.system("AniMetaFill Starting...")
+    config = load_config()
+    sched_conf = config.get('scheduling', {})
+
+    # Check for immediate run flag
+    if "--now" in sys.argv or not sched_conf.get('enabled', False):
+        run_sync()
+        if not sched_conf.get('enabled', False):
+            return
+
+    # Initialize Scheduler with TZ awareness
+    tz = os.environ.get('TZ', 'UTC')
+    scheduler = BackgroundScheduler(timezone=tz)
+    logger.info(f"Scheduler initialized with timezone: {tz}")
+    mode = sched_conf.get('mode', 'daily').lower()
+    time_str = sched_conf.get('time', '03:00')
+    try:
+        hour, minute = map(int, time_str.split(':'))
+    except ValueError:
+        hour, minute = 3, 0
+
+    if mode == 'interval':
+        minutes = sched_conf.get('interval', 1440)
+        scheduler.add_job(run_sync, IntervalTrigger(minutes=minutes))
+        logger.system(f"Scheduled: Every {minutes} minutes.")
+    elif mode == 'daily':
+        scheduler.add_job(run_sync, CronTrigger(hour=hour, minute=minute))
+        logger.system(f"Scheduled: Daily at {time_str}.")
+    elif mode == 'weekly':
+        day_of_week = sched_conf.get('weekday', 'mon').lower()
+        scheduler.add_job(run_sync, CronTrigger(day_of_week=day_of_week, hour=hour, minute=minute))
+        logger.system(f"Scheduled: Weekly on {day_of_week} at {time_str}.")
+    elif mode == 'monthly':
+        day = sched_conf.get('day', 1)
+        scheduler.add_job(run_sync, CronTrigger(day=day, hour=hour, minute=minute))
+        logger.system(f"Scheduled: Monthly on day {day} at {time_str}.")
+
+    # Run on startup if configured
+    if sched_conf.get('run_on_startup', True):
+        logger.info("Startup sync triggered...")
+        run_sync()
+
+    scheduler.start()
+    logger.success("Daemon is alive. Waiting for next schedule...")
+
+    try:
+        while True:
+            time.sleep(1)
+    except (KeyboardInterrupt, SystemExit):
+        scheduler.shutdown()
+        logger.warning("Daemon stopping...")
+
+if __name__ == "__main__":
+    main()

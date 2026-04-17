@@ -1,0 +1,20 @@
+# Configuration
+config.yml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Application Data
+logs/*
+data/*
+!data/kometa_overlays/
+data/kometa_overlays/*
+!data/kometa_overlays/.gitkeep
+
+# IDEs
+.idea/
+.vscode/
