@@ -28,7 +28,7 @@ def load_config():
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-def run_sync():
+def run_sync(scheduler=None):
     """
     Core synchronization loop.
     
@@ -39,6 +39,7 @@ def run_sync():
     4. Researches missing filler data via SIMKL and AFL.
     5. Generates optimized Kometa Overlay YAMLs.
     """
+    start_time = time.time()
     logger.system(f"Starting Sync Task: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     config = load_config()
 
@@ -195,8 +196,6 @@ def run_sync():
                 if not search_success and not any(db_mapping.values()):
                     log_skip("No filler data found in any sync tier", title)
                     continue
-            else:
-                logger.info(f"Local DB is already up-to-date ({db_count} markers). Skipping search.")
 
             # E. Stage Kometa Overlays
             if any(db_mapping.values()):
@@ -234,6 +233,21 @@ def run_sync():
     print(f"  • Successfully Mapped: {successful_count}")
     print(f"  • Skipped/Failed:      {total_shows - successful_count}")
 
+    # Calculate and format duration
+    duration_total = time.time() - start_time
+    if duration_total < 60:
+        duration_str = f"{duration_total:.1f}s"
+    else:
+        duration_str = f"{int(duration_total // 60)}m {int(duration_total % 60)}s"
+    print(f"  • Run Duration:        {duration_str}")
+
+    if scheduler:
+        jobs = scheduler.get_jobs()
+        if jobs:
+            next_run = min(job.next_run_time for job in jobs if job.next_run_time)
+            if next_run:
+                print(f"  • Next Scheduled Run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+
     if skipped_reasons:
         print("\n  Reasons for Skipping:")
         for reason, count in skipped_reasons.items():
@@ -259,7 +273,7 @@ def main():
 
     # Check for immediate run flag
     if "--now" in sys.argv or not sched_conf.get('enabled', False):
-        run_sync()
+        run_sync() # scheduler=None here as it's not initialized yet
         if not sched_conf.get('enabled', False):
             return
 
@@ -284,25 +298,25 @@ def main():
     for h, m in time_points:
         if mode == 'interval':
             minutes = sched_conf.get('interval', 1440)
-            scheduler.add_job(run_sync, IntervalTrigger(minutes=minutes))
+            scheduler.add_job(run_sync, IntervalTrigger(minutes=minutes), kwargs={'scheduler': scheduler})
             logger.system(f"Scheduled: Every {minutes} minutes.")
             break
         elif mode == 'daily':
-            scheduler.add_job(run_sync, CronTrigger(hour=h, minute=m))
+            scheduler.add_job(run_sync, CronTrigger(hour=h, minute=m), kwargs={'scheduler': scheduler})
             logger.system(f"Scheduled: Daily at {h}:{m}.")
         elif mode == 'weekly':
             day_of_week = sched_conf.get('weekday', 'mon').lower()
-            scheduler.add_job(run_sync, CronTrigger(day_of_week=day_of_week, hour=h, minute=m))
+            scheduler.add_job(run_sync, CronTrigger(day_of_week=day_of_week, hour=h, minute=m), kwargs={'scheduler': scheduler})
             logger.system(f"Scheduled: Weekly on {day_of_week} at {h}:{m}.")
         elif mode == 'monthly':
             day = sched_conf.get('day', 1)
-            scheduler.add_job(run_sync, CronTrigger(day=day, hour=h, minute=m))
+            scheduler.add_job(run_sync, CronTrigger(day=day, hour=h, minute=m), kwargs={'scheduler': scheduler})
             logger.system(f"Scheduled: Monthly on day {day} at {h}:{m}.")
 
     # Run on startup if configured
     if sched_conf.get('run_on_startup', True):
         logger.info("Startup sync triggered...")
-        run_sync()
+        run_sync(scheduler=scheduler)
 
     scheduler.start()
     logger.success("Daemon is alive. Waiting for next schedule...")
