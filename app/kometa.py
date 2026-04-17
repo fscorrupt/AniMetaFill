@@ -122,8 +122,8 @@ class KometaYamlGenerator:
     def add_show_overlays(self, anime_title: str, episode_mapping: Dict[str, List[int]], sonarr_map: Dict[int, str]):
         """
         Creates localized regex-based overlay blocks.
-        
-        This method translates internal absolute episode numbers into 
+
+        This method translates internal absolute episode numbers into
         surgical SxxExx regex patterns that Kometa's filepath.regex filter
         uses to apply overlays.
         """
@@ -151,7 +151,9 @@ class KometaYamlGenerator:
                         "color": hex_color
                     },
                     "builder_level": "episode",
-                    "plex_all": True,
+                    "plex_search": {
+                        "title": anime_title
+                    },
                     "filters": {
                         "show_title": anime_title,
                         "filepath.regex": regex_pattern
@@ -161,7 +163,7 @@ class KometaYamlGenerator:
     def save_unified_file(self, filename: str = "anime_overlays.yml"):
         """
         Saves the finalized unified overlay file atomically using a temporary file
-        and os.replace. This prevents Kometa from reading a partially-written 
+        and os.replace. This prevents Kometa from reading a partially-written
         file during active runs.
         """
         if not self.overlays: return None
