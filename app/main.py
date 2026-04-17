@@ -226,12 +226,11 @@ def run_sync(scheduler=None):
         logger.error(f"Failed to export unmapped shows report: {e}")
 
     # 5. Final Summary
-    print("\n" + "="*50)
-    print("  🏁  FINAL SYNC SUMMARY")
-    print("="*50)
-    print(f"  • Total Shows:       {total_shows}")
-    print(f"  • Successfully Mapped: {successful_count}")
-    print(f"  • Skipped/Failed:      {total_shows - successful_count}")
+    logger.divider()
+    logger.system("FINAL SYNC SUMMARY")
+    logger.info(f"Total Shows:         {total_shows}")
+    logger.info(f"Successfully Mapped: {successful_count}")
+    logger.info(f"Skipped/Failed:      {total_shows - successful_count}")
 
     # Calculate and format duration
     duration_total = time.time() - start_time
@@ -239,13 +238,12 @@ def run_sync(scheduler=None):
         duration_str = f"{duration_total:.1f}s"
     else:
         duration_str = f"{int(duration_total // 60)}m {int(duration_total % 60)}s"
-    print(f"  • Run Duration:        {duration_str}")
+    logger.info(f"Run Duration:        {duration_str}")
 
     if scheduler:
         try:
             jobs = scheduler.get_jobs()
             if jobs:
-                # Safely collect next_run_time from all jobs
                 run_times = []
                 for job in jobs:
                     nrt = getattr(job, 'next_run_time', None)
@@ -254,16 +252,16 @@ def run_sync(scheduler=None):
                 
                 if run_times:
                     next_run = min(run_times)
-                    print(f"  • Next Scheduled Run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
+                    logger.success(f"Next Scheduled Run: {next_run.strftime('%Y-%m-%d %H:%M:%S')}")
         except Exception as e:
             logger.warning(f"Could not determine next run time: {e}")
 
     if skipped_reasons:
-        print("\n  Reasons for Skipping:")
+        logger.info("Reasons for Skipping:")
         for reason, count in skipped_reasons.items():
-            print(f"    - {reason:<25} : {count}")
-    print("="*50 + "\n")
-
+            logger.info(f"  - {reason:<25} : {count}")
+    
+    logger.divider()
     logger.system("Sync Task Finished.")
 
 def main():
@@ -281,11 +279,10 @@ def main():
     config = load_config()
     sched_conf = config.get('scheduling', {})
 
-    # Check for immediate run flag
-    if "--now" in sys.argv or not sched_conf.get('enabled', False):
-        run_sync() # scheduler=None here as it's not initialized yet
-        if not sched_conf.get('enabled', False):
-            return
+    # Check for immediate run flag (One-off run without scheduler)
+    if not sched_conf.get('enabled', False):
+        run_sync()
+        return
 
     # Initialize Scheduler with TZ awareness
     tz = os.environ.get('TZ', 'UTC')
@@ -323,13 +320,15 @@ def main():
             scheduler.add_job(run_sync, CronTrigger(day=day, hour=h, minute=m), kwargs={'scheduler': scheduler})
             logger.system(f"Scheduled: Monthly on day {day} at {h}:{m}.")
 
-    # Run on startup if configured
-    if sched_conf.get('run_on_startup', True):
-        logger.info("Startup sync triggered...")
-        run_sync(scheduler=scheduler)
-
+    # Start scheduler first so Job.next_run_time is populated
     scheduler.start()
     logger.success("Daemon is alive. Waiting for next schedule...")
+
+    # Run immediate sync if --now is present OR run_on_startup is enabled
+    if "--now" in sys.argv or sched_conf.get('run_on_startup', True):
+        reason = "CLI --now" if "--now" in sys.argv else "Startup trigger"
+        logger.info(f"Executing initial sync ({reason})...")
+        run_sync(scheduler=scheduler)
 
     try:
         while True:
