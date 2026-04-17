@@ -146,8 +146,8 @@ Add the following to your Kometa configuration to apply the overlays to your Ani
 ```yaml
 libraries:
   Anime:
-    overlay_path:
-      - file: config/anime_overlays.yml
+    overlay_files:
+    - file: config/anime_overlays.yml
 ```
 
 ---
