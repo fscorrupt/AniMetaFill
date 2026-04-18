@@ -152,7 +152,7 @@ class KometaYamlGenerator:
                     },
                     "builder_level": "episode",
                     "plex_search": {
-                        "title": anime_title
+                        "title.is": anime_title
                     },
                     "filters": {
                         "show_title": anime_title,

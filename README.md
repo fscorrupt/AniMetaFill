@@ -14,7 +14,7 @@
 Unlike traditional metadata agents that rely on Plex labels or tags (which can be messy and hard to manage), AniMetaFill generates **surgical `filepath.regex` overlays** for Kometa.
 
 - **Zero Metadata Bloat**: No need to "tag" your media. The classification exists purely in the overlay layer.
-- **Precision Matching**: Uses a 3-tier matching strategy (ID -> Title -> Fallback) to ensure your library is mapped accurately.
+- **Precision Matching**: Uses a 3-tier matching strategy (ID -> Title -> Fallback) and handles complex multi-season mapping (e.g., detecting absolute number resets) to ensure your library is mapped accurately.
 - **Set and Forget**: Runs as a daemon with a robust scheduler to keep your library updated as new episodes air.
 
 ---

@@ -129,6 +129,7 @@ class SonarrTranslator:
             
             abs_map = {}
             calculated_abs = 1
+            last_actual_abs = 0
             
             for ep in standard_episodes:
                 season = ep['seasonNumber']
@@ -138,12 +139,22 @@ class SonarrTranslator:
                 # Check if Sonarr already has an absolute number
                 actual_abs = ep.get('absoluteEpisodeNumber', 0)
                 
-                # Use actual absolute number if available, otherwise fallback to calculated
-                mapping_abs = actual_abs if actual_abs and actual_abs > 0 else calculated_abs
+                # Detect and handle absolute number resets or collisions across seasons.
+                # Many Sonarr metadata sources reset absolute numbers to 1 for new sagas (e.g. DBZ Kai S02).
+                # We prioritize continuity to matchSimkl/AFL provider data.
+                if actual_abs > 0 and actual_abs <= last_actual_abs:
+                    actual_abs = 0 
+                
+                # Use the provided absolute number if it's valid and continuous, 
+                # otherwise use our calculated sequence number.
+                mapping_abs = actual_abs if actual_abs > 0 else calculated_abs
                 
                 abs_map[mapping_abs] = s_e_format
                 
-                # Increment calculated absolute counter
+                if actual_abs > 0:
+                    last_actual_abs = actual_abs
+                
+                # Always increment calculated_abs to keep a perfect linear fallback
                 calculated_abs += 1
                 
             logger.info(f"Sonarr mapping created: {len(abs_map)} episodes.")
