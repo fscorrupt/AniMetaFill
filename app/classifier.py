@@ -66,7 +66,7 @@ class EpisodeClassifierService:
         title_candidates = unique_candidates[:10]
         
         episodes = []
-        best_title = None
+        source_url = None
         show_found_on_any = False
         had_provider_error = False
 
@@ -75,14 +75,14 @@ class EpisodeClassifierService:
             logger.process(f"Attempting High-Precision ID match (TVDB: {tvdb_id})...")
             try:
                 # Note: Pass the main title for logging, but the actual lookup uses the ID
-                eps, found = self.simkl_provider.fetch_episodes(main_title, tvdb_id=tvdb_id)
+                eps, found, url = self.simkl_provider.fetch_episodes(main_title, tvdb_id=tvdb_id)
                 if found: 
                     show_found_on_any = True
+                    source_url = url
                     # If ID match is found, we are sure of the show. 
                     # If it has episodes, we are done.
                     if eps:
                         episodes = eps
-                        best_title = main_title
                         # Break and move to DB update
                     else:
                         # We found the show but no filler data. 
@@ -106,11 +106,12 @@ class EpisodeClassifierService:
                 logger.process(f"Searching SIMKL ✨ for '{title}'...")
                 try:
                     # Pass tvdb_id=None here because we already tried the ID lookup above
-                    eps, found = self.simkl_provider.fetch_episodes(title, tvdb_id=None)
-                    if found: show_found_on_any = True
+                    eps, found, url = self.simkl_provider.fetch_episodes(title, tvdb_id=None)
+                    if found: 
+                        show_found_on_any = True
+                        source_url = url
                     if eps:
                         episodes = eps
-                        best_title = title
                         break
                 except Exception as e:
                     logger.error(f"SIMKL error for {title}: {e}")
@@ -122,11 +123,12 @@ class EpisodeClassifierService:
             # Try AnimeFillerList - Fallback Scraper
             logger.process(f"Searching AFL 🔍 for '{title}'...")
             try:
-                eps, found = self.afl_provider.fetch_episodes(title, tvdb_id=tvdb_id)
-                if found: show_found_on_any = True
+                eps, found, url = self.afl_provider.fetch_episodes(title, tvdb_id=tvdb_id)
+                if found: 
+                    show_found_on_any = True
+                    source_url = url
                 if eps:
                     episodes = eps
-                    best_title = title
                     break
             except Exception as e:
                 logger.error(f"AFL error for {title}: {e}")
@@ -145,14 +147,15 @@ class EpisodeClassifierService:
                 EpisodeData(number=i, title=f"Episode {i}", category=EpisodeCategory.CANON)
                 for i in range(1, expected_count + 1)
             ]
+            source_url = "Calculated Fallback (Canon)"
         elif not episodes and had_provider_error:
             logger.warning(f"Technical errors occurred during search for {main_title}. Skipping fallback to prevent incorrect mapping.")
 
         # Step 3: Upsert to DB (Tier 1)
         if episodes:
             print(f"[Classifier] Successfully found {len(episodes)} episodes. Updating local DB...")
-            self.db.upsert_episodes(main_title, episodes)
-            return True
+            self.db.upsert_episodes(main_title, episodes, source_url=source_url)
+            return True, source_url
         else:
             print(f"[Classifier] Failed to find any episode data for {main_title} in all tiers.")
-            return False
+            return False, None

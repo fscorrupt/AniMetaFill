@@ -97,8 +97,11 @@ def run_sync(scheduler=None):
         if any(title.lower() == s.lower() for s in shows): # Only import what's in our library
             series_info = sonarr.get_series_info(title)
             if series_info:
-                full_map = sonarr.get_absolute_to_season_map(series_info['id'])
-                inv_map = {v: k for k, v in full_map.items()}
+                # Unpack numeric and title maps
+                sonarr_map, _ = sonarr.get_absolute_to_season_map(series_info['id'])
+                if not sonarr_map: continue
+                
+                inv_map = {v: k for k, v in sonarr_map.items()}
                 
                 all_eps = []
                 for item in edits:
@@ -108,7 +111,7 @@ def run_sync(scheduler=None):
                         if abs_num:
                             all_eps.append(EpisodeData(
                                 number=abs_num,
-                                title="Manual Override",
+                                title=f"Episode {abs_num}",
                                 category=cat_enum
                             ))
                 
@@ -139,7 +142,7 @@ def run_sync(scheduler=None):
 
             if series_info:
                 status = series_info.get('status', 'unknown')
-                sonarr_map = sonarr.get_absolute_to_season_map(series_info['id'])
+                sonarr_map, _ = sonarr.get_absolute_to_season_map(series_info['id'])
             else:
                 logger.info("Not found in Sonarr. Attempting Plex-native fallback...")
                 sonarr_map = scanner.get_episode_map(title)
@@ -183,11 +186,14 @@ def run_sync(scheduler=None):
                     title_candidates.remove(title)
                     title_candidates.insert(0, title)
 
-                search_success = classifier.force_update_mapping(
+                search_success, source_url = classifier.force_update_mapping(
                     title_candidates, 
                     tvdb_id=series_info.get('tvdb_id') if series_info else None,
                     expected_count=sonarr_count
                 )
+
+                if search_success and source_url:
+                    logger.success(f"Source: {source_url}")
 
                 # Fetch fresh mapping after search
                 db_mapping = db.get_episodes(title)
@@ -199,7 +205,9 @@ def run_sync(scheduler=None):
 
             # E. Stage Kometa Overlays
             if any(db_mapping.values()):
-                kometa_gen.add_show_overlays(title, db_mapping, sonarr_map)
+                # Use 2-tier mapping (Numeric + Title)
+                sonarr_map, title_map = sonarr.get_absolute_to_season_map(series_info['id']) if series_info else (sonarr_map, {})
+                kometa_gen.add_show_overlays(title, db_mapping, sonarr_map, title_map=title_map)
                 successful_count += 1
                 logger.success(f"Show mapped with {db_count} filler/canon markers.")
             else:

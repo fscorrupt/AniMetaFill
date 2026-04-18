@@ -104,10 +104,21 @@ class SonarrTranslator:
             logger.error(f"Sonarr search error: {e}")
             return None
 
-    def get_absolute_to_season_map(self, series_id: int) -> Dict[int, str]:
+    def _normalize_title(self, title: str) -> str:
         """
-        Maps absolute episode numbers to SxxExx strings.
-        Includes a mathematical fallback if absolute numbers are missing in Sonarr.
+        Strips all punctuation, spaces, and casing to create a 
+        high-confidence mapping key for title-based matching.
+        """
+        if not title: return ""
+        return re.sub(r'[^a-z0-9]', '', title.lower())
+
+    def get_absolute_to_season_map(self, series_id: int) -> tuple[Dict[int, str], Dict[str, str]]:
+        """
+        Maps episodes to SxxExx using two keys:
+        1. Absolute Number (Primary)
+        2. Normalized Title (Fallback for Specials/Shifts)
+        
+        Returns: (abs_map, title_map)
         """
         try:
             response = requests.get(
@@ -119,15 +130,14 @@ class SonarrTranslator:
             response.raise_for_status()
             episodes = response.json()
             
-            # Sort episodes by seasonNumber then episodeNumber
-            # Ignore specials (season 0) for absolute mapping consistency
-            standard_episodes = [
-                ep for ep in episodes 
-                if ep.get('seasonNumber', 0) > 0
-            ]
-            standard_episodes.sort(key=lambda x: (x['seasonNumber'], x['episodeNumber']))
-            
+            # Note: Calculation ONLY applies to standard seasons to maintain linear stability.
+            standard_episodes = sorted([ep for ep in episodes if ep.get('seasonNumber', 0) > 0], key=lambda x: (x['seasonNumber'], x['episodeNumber']))
+            all_episodes = sorted(episodes, key=lambda x: (x['seasonNumber'], x['episodeNumber']))
+
             abs_map = {}
+            title_map = {}
+            
+            # Phase 1: Sequential calculation for standard seasons
             calculated_abs = 1
             last_actual_abs = 0
             
@@ -139,26 +149,37 @@ class SonarrTranslator:
                 # Check if Sonarr already has an absolute number
                 actual_abs = ep.get('absoluteEpisodeNumber', 0)
                 
-                # Detect and handle absolute number resets or collisions across seasons.
-                # Many Sonarr metadata sources reset absolute numbers to 1 for new sagas (e.g. DBZ Kai S02).
-                # We prioritize continuity to matchSimkl/AFL provider data.
+                # Detect and handle absolute number resets across seasons.
                 if actual_abs > 0 and actual_abs <= last_actual_abs:
                     actual_abs = 0 
                 
-                # Use the provided absolute number if it's valid and continuous, 
-                # otherwise use our calculated sequence number.
                 mapping_abs = actual_abs if actual_abs > 0 else calculated_abs
-                
                 abs_map[mapping_abs] = s_e_format
                 
                 if actual_abs > 0:
                     last_actual_abs = actual_abs
                 
-                # Always increment calculated_abs to keep a perfect linear fallback
                 calculated_abs += 1
+            
+            # Phase 2: Title & Explicit Mapping for ALL episodes (including Specials/Season 0)
+            for ep in all_episodes:
+                season = ep['seasonNumber']
+                episode_num = ep['episodeNumber']
+                s_e_format = f"S{season:02d}E{episode_num:02d}"
+                actual_abs = ep.get('absoluteEpisodeNumber', 0)
+                title = ep.get('title', '')
                 
-            logger.info(f"Sonarr mapping created: {len(abs_map)} episodes.")
-            return abs_map
+                # 1. Build Title Map for fallback matching
+                if title:
+                    norm_title = self._normalize_title(title)
+                    title_map[norm_title] = s_e_format
+                
+                # 2. Add Specials to ABS map if they have explicit numbering
+                if season == 0 and actual_abs > 0:
+                    abs_map[actual_abs] = s_e_format
+
+            logger.info(f"Sonarr mapping created: {len(abs_map)} numeric, {len(title_map)} titles.")
+            return abs_map, title_map
         except Exception as e:
-            logger.error(f"Error creating absolute map: {e}")
-            return {}
+            logger.error(f"Error creating mapping for series {series_id}: {e}")
+            return {}, {}

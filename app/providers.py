@@ -129,7 +129,7 @@ class AnimeFillerListProvider(EpisodeSourceProvider):
         # Safety Cap: Never try more than 3 variations per candidate title to avoid bans
         return variations[:3]
 
-    def fetch_episodes(self, anime_title: str, tvdb_id: Optional[int] = None) -> tuple[List[EpisodeData], bool]:
+    def fetch_episodes(self, anime_title: str, tvdb_id: Optional[int] = None) -> tuple[List[EpisodeData], bool, Optional[str]]:
         slug_variations = self._get_slug_variations(anime_title)
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -175,12 +175,12 @@ class AnimeFillerListProvider(EpisodeSourceProvider):
                 
                 if episodes:
                     logger.success(f"Found {len(episodes)} episodes on AFL via '{slug}'")
-                    return episodes, True
+                    return episodes, True, url
                     
             except Exception as e:
                 continue
                 
-        return [], found_any_match
+        return [], found_any_match, None
 
 class SimklProvider(EpisodeSourceProvider):
     """
@@ -292,14 +292,14 @@ class SimklProvider(EpisodeSourceProvider):
                     continue
         return sorted(list(set(numbers)))
 
-    def fetch_episodes(self, anime_title: str, tvdb_id: Optional[int] = None) -> tuple[List[EpisodeData], bool]:
+    def fetch_episodes(self, anime_title: str, tvdb_id: Optional[int] = None) -> tuple[List[EpisodeData], bool, Optional[str]]:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         
         info = self._get_simkl_info(anime_title, tvdb_id=tvdb_id)
         if not info:
-            return [], False
+            return [], False, None
 
         simkl_id = info['id']
         slug = info['slug']
@@ -348,11 +348,11 @@ class SimklProvider(EpisodeSourceProvider):
 
             if episodes:
                 logger.success(f"Successfully found {len(episodes)} episodes via SIMKL")
-                return episodes, True
+                return episodes, True, url
 
-            return [], True # Found info but no eps found at all
+            return [], True, url # Found info but no eps found at all
 
         except Exception as e:
             logger.error(f"SIMKL Scrape error: {e}")
             
-        return [], True # info was found even if scrape failed
+        return [], True, url # info was found even if scrape failed

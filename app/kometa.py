@@ -119,24 +119,35 @@ class KometaYamlGenerator:
                 shutil.move(file_path, os.path.join(backup_dir, filename))
             except Exception: pass
 
-    def add_show_overlays(self, anime_title: str, episode_mapping: Dict[str, List[int]], sonarr_map: Dict[int, str]):
-        """
-        Creates localized regex-based overlay blocks.
+    def _normalize_title(self, title: str) -> str:
+        """Strips punctuation/spaces for title-based matching."""
+        if not title: return ""
+        return re.sub(r'[^a-z0-9]', '', title.lower())
 
-        This method translates internal absolute episode numbers into
-        surgical SxxExx regex patterns that Kometa's filepath.regex filter
-        uses to apply overlays.
+    def add_show_overlays(self, anime_title: str, episode_mapping: Dict[str, List[tuple]], sonarr_map: Dict[int, str], title_map: Dict[str, str] = None):
         """
-        for category, abs_numbers in episode_mapping.items():
-            if not abs_numbers: continue
+        Creates localized regex-based overlay blocks using a 2-tier matching strategy:
+        1. Numerical check via sonarr_map (Absolute Number)
+        2. Surgical Text check via title_map (Normalized Title) - handles Specials/Shifts
+        """
+        title_map = title_map or {}
+        for category, episodes_data in episode_mapping.items():
+            if not episodes_data: continue
 
             # Use configured labels and colors
             label_text = self.labels.get(category, category.title())
             hex_color = self.colors.get(category, "#262626B3")
 
             episode_list = []
-            for abs_num in abs_numbers:
+            for abs_num, ep_title in episodes_data:
+                # Priority 1: Absolute Number Match
                 s_e = sonarr_map.get(abs_num)
+                
+                # Priority 2: Title Fallback Match (Crucial for Specials and Season Shifts)
+                if not s_e and ep_title:
+                    norm_title = self._normalize_title(ep_title)
+                    s_e = title_map.get(norm_title)
+
                 if s_e:
                     episode_list.append(s_e)
 
